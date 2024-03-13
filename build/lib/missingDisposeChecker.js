@@ -16,24 +16,23 @@ function checkFile(program, sourceFile) {
     const checker = program.getTypeChecker();
     checkNode(sourceFile);
     function checkNode(node) {
-        if (node.kind === ts.SyntaxKind.CallExpression) {
+        if (ts.isCallExpression(node)) {
             const callExpression = node;
             const expression = callExpression.expression;
             if (expression.kind === ts.SyntaxKind.PropertyAccessExpression) {
-                const propertyAccess = expression;
-                if (propertyAccess.expression.kind === ts.SyntaxKind.ThisKeyword) {
-                    return; // Skip calls to methods on 'this'
-                }
+                return;
             }
             const returnType = checker.getTypeAtLocation(callExpression);
             const disposeMethod = returnType.getProperty('dispose');
             if (disposeMethod && (disposeMethod.flags & ts.SymbolFlags.Method)) {
-                const parent = callExpression.parent;
-                if (parent && parent.kind === ts.SyntaxKind.VariableDeclaration) {
+                const text = node.getText().toLowerCase();
+                if (text.includes('register') ||
+                    text.includes('dispose') ||
+                    text.includes('disposab')) {
                     return;
                 }
                 const { line, character } = sourceFile.getLineAndCharacterOfPosition(node.getStart());
-                console.log(`[build/lib/missingDisposeChecker.ts]: Call to a method that returns IDisposable without assignment potentially leaks  (${sourceFile.fileName} (${line + 1},${character + 1})`);
+                console.log(`${sourceFile.fileName} (${line + 1},${character + 1})`);
             }
         }
         if (node.kind !== ts.SyntaxKind.Identifier) {
