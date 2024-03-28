@@ -24,6 +24,10 @@ export interface INodeJSWatcherInstance {
 	readonly request: INonRecursiveWatchRequest;
 }
 
+export interface IMergedNonRecursiveWatchRequest extends INonRecursiveWatchRequest {
+	readonly additionalRequests: INonRecursiveWatchRequest[];
+}
+
 export class NodeJSWatcher extends BaseWatcher implements INonRecursiveWatcher {
 
 	readonly onDidError = Event.None;
@@ -39,14 +43,14 @@ export class NodeJSWatcher extends BaseWatcher implements INonRecursiveWatcher {
 	protected override async doWatch(requests: INonRecursiveWatchRequest[]): Promise<void> {
 
 		// Figure out duplicates to remove from the requests
-		requests = this.removeDuplicateRequests(requests);
+		requests = this.mergeRequests(requests);
 
 		// Figure out which watchers to start and which to stop
 		const requestsToStart: INonRecursiveWatchRequest[] = [];
 		const watchersToStop = new Set(Array.from(this.watchers));
 		for (const request of requests) {
 			const watcher = this.findWatcher(request);
-			if (watcher && patternsEquals(watcher.request.excludes, request.excludes) && patternsEquals(watcher.request.includes, request.includes)) {
+			if (watcher) {
 				watchersToStop.delete(watcher); // keep watcher
 			} else {
 				requestsToStart.push(request); // start watching
@@ -76,19 +80,8 @@ export class NodeJSWatcher extends BaseWatcher implements INonRecursiveWatcher {
 
 	private findWatcher(request: INonRecursiveWatchRequest): INodeJSWatcherInstance | undefined {
 		for (const watcher of this.watchers) {
-
-			// Requests or watchers with correlation always match on that
-			if (typeof request.correlationId === 'number' || typeof watcher.request.correlationId === 'number') {
-				if (watcher.request.correlationId === request.correlationId) {
-					return watcher;
-				}
-			}
-
-			// Non-correlated requests or watchers match on path
-			else {
-				if (isEqual(watcher.request.path, request.path, !isLinux /* ignorecase */)) {
-					return watcher;
-				}
+			if (isEqual(watcher.request.path, request.path, !isLinux /* ignorecase */) && patternsEquals(watcher.request.excludes, request.excludes) && patternsEquals(watcher.request.includes, request.includes)) {
+				return watcher;
 			}
 		}
 
@@ -101,8 +94,7 @@ export class NodeJSWatcher extends BaseWatcher implements INonRecursiveWatcher {
 		const instance = new NodeJSFileWatcherLibrary(request, this.recursiveWatcher, changes => this._onDidChangeFile.fire(changes), () => this._onDidWatchFail.fire(request), msg => this._onDidLogMessage.fire(msg), this.verboseLogging);
 
 		// Remember as watcher instance
-		const watcher: INodeJSWatcherInstance = { request, instance };
-		this.watchers.add(watcher);
+		this.watchers.add({ request, instance });
 	}
 
 	override async stop(): Promise<void> {
@@ -121,27 +113,61 @@ export class NodeJSWatcher extends BaseWatcher implements INonRecursiveWatcher {
 		watcher.instance.dispose();
 	}
 
-	private removeDuplicateRequests(requests: INonRecursiveWatchRequest[]): INonRecursiveWatchRequest[] {
-		const mapCorrelationtoRequests = new Map<number | undefined /* correlation */, Map<string, INonRecursiveWatchRequest>>();
+	private mergeRequests(requests: INonRecursiveWatchRequest[]): IMergedNonRecursiveWatchRequest[] {
+		const mergedRequests = new Set<IMergedNonRecursiveWatchRequest>();
 
-		// Ignore requests for the same paths that have the same correlation
+		// Group requests by path
+		const mapPathToRequests = new Map<string, INonRecursiveWatchRequest[]>();
 		for (const request of requests) {
 			const path = isLinux ? request.path : request.path.toLowerCase(); // adjust for case sensitivity
 
-			let requestsForCorrelation = mapCorrelationtoRequests.get(request.correlationId);
-			if (!requestsForCorrelation) {
-				requestsForCorrelation = new Map<string, INonRecursiveWatchRequest>();
-				mapCorrelationtoRequests.set(request.correlationId, requestsForCorrelation);
+			let requestsForPath = mapPathToRequests.get(path);
+			if (!requestsForPath) {
+				requestsForPath = [];
+				mapPathToRequests.set(path, requestsForPath);
 			}
 
-			if (requestsForCorrelation.has(path)) {
-				this.trace(`ignoring a request for watching who's path is already watched: ${this.requestToString(request)}`);
-			}
-
-			requestsForCorrelation.set(path, request);
+			requestsForPath.push(request);
 		}
 
-		return Array.from(mapCorrelationtoRequests.values()).map(requests => Array.from(requests.values())).flat();
+		// Merge requests for the same path and same ignore/exclude rules
+		for (const requestsForPath of mapPathToRequests.values()) {
+			const mergedRequestsForPath = new Set<IMergedNonRecursiveWatchRequest>();
+
+			// Eagerly add them all at first
+			for (const requestForPath of requestsForPath) {
+				mergedRequestsForPath.add({ ...requestForPath, additionalRequests: [] });
+			}
+
+			// Then try to merge them
+			// TODO: prefer a correlated request for the main-request since that will support suspend/resume
+			for (const mergedRequestForPath of mergedRequestsForPath) {
+				for (const otherMergedRequestForPath of mergedRequestsForPath) {
+					if (mergedRequestForPath === otherMergedRequestForPath) {
+						continue;
+					}
+
+					if (patternsEquals(mergedRequestForPath.excludes, otherMergedRequestForPath.excludes) && patternsEquals(mergedRequestForPath.includes, otherMergedRequestForPath.includes)) {
+						const additionalRequests: INonRecursiveWatchRequest[] = [];
+						for (const additionalRequest of [mergedRequestForPath, ...mergedRequestForPath.additionalRequests]) {
+							if (otherMergedRequestForPath.correlationId !== additionalRequest.correlationId) {
+								additionalRequests.push(additionalRequest);
+							}
+						}
+
+						otherMergedRequestForPath.additionalRequests.push(...additionalRequests);
+						mergedRequestsForPath.delete(mergedRequestForPath);
+						break;
+					}
+				}
+			}
+
+			for (const mergedRequestForPath of mergedRequestsForPath) {
+				mergedRequests.add(mergedRequestForPath);
+			}
+		}
+
+		return Array.from(mergedRequests);
 	}
 
 	async setVerboseLogging(enabled: boolean): Promise<void> {
