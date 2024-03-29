@@ -1,0 +1,42 @@
+import java.io.IOException;
+import java.io.PrintWriter;
+import java.net.Socket;
+import java.util.Date;
+import java.util.Scanner;
+import java.util.concurrent.TimeUnit;
+
+public class BasicNetworkingTestClient {
+	public static void main(String[] args) throws IOException {
+		if (args.length != 3) {
+			System.err.println("Pass the server IP and port and client number�");
+			return;
+		}
+		
+		String serverIP=args[0].trim();
+		String portNumber=args[1].trim();
+		String clientID=args[2].trim();
+		
+		Socket socket = new Socket(serverIP, Integer.valueOf(portNumber));
+		PrintWriter out = new PrintWriter(socket.getOutputStream(), true);
+		System.out.println("Sending client "+clientID+" hello!");		
+		out.println("CLIENTHELLO|"+clientID+"|"+new Date().toString());	
+
+		// Now start sending messages
+		
+		for (int loop=0; loop<10; loop++) {
+			try {
+				TimeUnit.SECONDS.sleep(1);
+			} catch(Exception e) {}
+			System.out.println("Sending "+String.valueOf(loop));		
+			out.println("CLIENTMESSAGE|"+clientID+"|"+String.valueOf(loop));							
+		}
+		
+		// Send Client End message
+		System.out.println("Sending end");		
+		out.println("CLIENTEND|"+clientID);			
+		System.out.println("Client Terminated");
+		
+//		Scanner in = new Scanner(socket.getInputStream());
+//		System.out.println("Server response: " + in.nextLine());
+	}
+}
