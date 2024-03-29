@@ -1,0 +1,169 @@
+import java.io.IOException;
+import java.io.PrintWriter;
+import java.net.ServerSocket;
+import java.net.Socket;
+import java.util.Date;
+import java.util.Scanner;
+
+public class COMP1549_2024_Server {
+
+/*	
+	public static class debugLog {
+		private int debugFlag = 0;
+		
+		debugLog(int ldebugFlag) {
+			debugFlag = ldebugFlag;
+		}
+		
+		public static void printDEBUG(String debugMessage) {
+			
+			if (debugFlag == 1) {
+				System.out.println(debugMessage);
+			}
+		}			
+	}
+*/	
+	// //////////////////////////////////////////////////////////////////////////////////
+	// Nested Networking Classes
+	// //////////////////////////////////////////////////////////////////////////////////
+	public class networkingWorker extends Thread{
+		
+		Socket lSocket = null;
+		
+		networkingWorker(Socket socket) {
+			lSocket = socket;
+		}
+		
+		// ///////////////////////////////////////////////////////////////////////////
+		// Main Server commands get registered here
+		// ///////////////////////////////////////////////////////////////////////////
+		public void processConnection() {
+					
+			System.out.println("Got a connection!");
+			
+			boolean keepTalking = true;	
+			boolean clientRegistered = false;
+			String mainClientID = "";
+			
+			while (keepTalking == true) {
+				// Wait for an incoming HELLO
+				try {
+					Scanner in = new Scanner(lSocket.getInputStream());
+					String newClientMessage = (in.nextLine()).trim();
+					
+					// ///////////////////////////////////////////////////////////////////////
+					// Check for a CLIENT COMMAND to process
+					// Command is always the first sequence of characters before the colon :
+					// ///////////////////////////////////////////////////////////////////////	
+					String[] clientSplit=newClientMessage.split("\\|");
+					if (clientSplit.length >= 2 && clientSplit.length <=3) {
+												
+						String clientCommand = clientSplit[0];
+						String clientID = clientSplit[1];
+						String clientValue = "";
+						if (clientSplit.length == 3) {
+							clientValue = clientSplit[2];
+						}
+	
+						switch(clientCommand) {
+						
+						case "CLIENTHELLO":
+							clientRegistered = true;
+							mainClientID = clientID;
+							System.out.println("Client "+clientID+" Hello received!");
+							break;
+						case "CLIENTMESSAGE":
+							if (clientRegistered == true) {
+								System.out.println("Client "+clientID+" message: "+clientValue);						
+							}
+							break;
+						case "CLIENTEND":
+							keepTalking = false;
+							System.out.println("Client "+clientID+" End received!");
+							break;						
+						}
+					}
+					else {
+						// Unrecognised COMMAND
+						System.out.println("ERROR: Unrecognised command from Client "+mainClientID+" - "+newClientMessage);
+					}
+				} catch(Exception e) {}
+			}
+
+			System.out.println("Finished a connection!");
+		}
+		
+		public void run() {
+			processConnection();
+		}
+	}
+	
+	
+	public class networkingServer {
+		
+		// private String testString = null;
+		private int portNumber = 0;
+		
+		networkingServer(int lPortNumber) {
+			this.portNumber = lPortNumber;		
+		}
+		
+		public void listenForConnections() {
+			
+			boolean keepListening = true;
+			
+			try {
+				
+				ServerSocket listener = new ServerSocket(this.portNumber);
+				
+				while(keepListening == true) {
+					
+					System.out.println("Started listening on port "+ String.valueOf(portNumber));					
+					Socket socket = listener.accept();
+					networkingWorker newWorker = new networkingWorker(socket);
+					newWorker.start();
+				}
+				
+				listener.close();
+
+			} catch(Exception e) { }
+						
+		}
+	}
+	
+	// //////////////////////////////////////////////////////////////////////////////////
+	// COMP1549_2024_Server private variables and methods
+	// //////////////////////////////////////////////////////////////////////////////////	
+	private int portNumber = 0;
+//	private debugLog myDebugLog = null;
+	
+	COMP1549_2024_Server(int lPort, int debugFlag) {
+		this.portNumber = lPort;
+//		myDebugLog = new debugLog(debugFlag);
+	}
+	
+
+	public void startServer() {
+		
+//		this.myDebugLog.printDEBUG("COMP1549_2024_Server:startServer - Start");
+		networkingServer myServer = new networkingServer(this.portNumber);
+		
+		myServer.listenForConnections();
+//		this.myDebugLog.printDEBUG("COMP1549_2024_Server:startServer - End");
+	}
+
+	// //////////////////////////////////////////////////////////////////////////////////
+	// COMP1549_2024_Server Static MAIN method
+	// //////////////////////////////////////////////////////////////////////////////////	
+	public static void main(String[] args) throws IOException {
+		if (args.length != 1) {
+			System.err.println("Syntax: COMP1549_2024_Server <port number>");
+			return;
+		}
+		
+		int myPort = Integer.parseInt(args[0]);
+				
+		COMP1549_2024_Server myMainServer = new COMP1549_2024_Server(myPort, 1);
+		myMainServer.startServer();
+		
+	}}
